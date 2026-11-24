@@ -3,11 +3,14 @@ functions creating them."""
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager
+from contextlib import contextmanager
 import importlib
 import sys
 from typing import Any
 from typing import ClassVar
 from typing import NoReturn
+from typing import overload
 
 
 class OutcomeException(BaseException):
@@ -195,8 +198,55 @@ class _XFail:
 xfail: _XFail = _XFail()
 
 
+@contextmanager
+def _importorskip_context(
+    *,
+    reason: str | None = None,
+    exc_type: type[ImportError] | None = None,
+):
+    """Context manager that skips the test/module if an import fails."""
+    import warnings
+
+    __tracebackhide__ = True
+    if exc_type is None:
+        exc_type = ModuleNotFoundError
+
+    skipped: Skipped | None = None
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        try:
+            yield
+        except exc_type as exc:
+            if reason is None:
+                name = getattr(exc, "name", None)
+                reason = f"could not import {name!r}: {exc}" if name else str(exc)
+            skipped = Skipped(reason, allow_module_level=True)
+    if skipped:
+        raise skipped
+
+
+@overload
+def importorskip(
+    modname: None = None,
+    minversion: None = None,
+    reason: str | None = None,
+    *,
+    exc_type: type[ImportError] | None = None,
+) -> AbstractContextManager[None]: ...
+
+
+@overload
 def importorskip(
     modname: str,
+    minversion: str | None = None,
+    reason: str | None = None,
+    *,
+    exc_type: type[ImportError] | None = None,
+) -> Any: ...
+
+
+def importorskip(
+    modname: str | None = None,
     minversion: str | None = None,
     reason: str | None = None,
     *,
@@ -205,8 +255,12 @@ def importorskip(
     """Import and return the requested module ``modname``, or skip the
     current test if the module cannot be imported.
 
+    When called with no ``modname``, returns a context manager that skips
+    if an import inside the ``with`` block raises ``exc_type`` (preserving
+    static type information for imported symbols).
+
     :param modname:
-        The name of the module to import.
+        The name of the module to import, or ``None`` to use as a context manager.
     :param minversion:
         If given, the imported module's ``__version__`` attribute must be at
         least this minimal version, otherwise the test is still skipped.
@@ -226,7 +280,7 @@ def importorskip(
 
 
     :returns:
-        The imported module. This should be assigned to its canonical name.
+        The imported module, or a context manager when ``modname`` is ``None``.
 
     :raises pytest.skip.Exception:
         If the module cannot be imported.
@@ -234,6 +288,9 @@ def importorskip(
     Example::
 
         docutils = pytest.importorskip("docutils")
+
+        with pytest.importorskip():
+            import docutils
 
     .. versionadded:: 8.2
 
@@ -246,6 +303,13 @@ def importorskip(
     import warnings
 
     __tracebackhide__ = True
+    if modname is None:
+        if minversion is not None:
+            raise ValueError(
+                "minversion cannot be used when importorskip() is used as a context manager"
+            )
+        return _importorskip_context(reason=reason, exc_type=exc_type)
+
     compile(modname, "", "eval")  # to catch syntaxerrors
 
     # Keep the public signature compatible while using the pytest 9.1 default behavior.

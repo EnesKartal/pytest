@@ -1537,6 +1537,28 @@ def test_importorskip() -> None:
         pytest.importorskip("doesnotexist")
 
 
+def test_importorskip_context_manager() -> None:
+    with pytest.importorskip():
+        import math
+
+    assert math.sqrt(4) == 2
+
+    with pytest.raises(
+        pytest.skip.Exception,
+        match=r"^could not import 'doesnotexist': No module named .*",
+    ):
+        with pytest.importorskip():
+            import doesnotexist  # noqa: F401
+
+    with pytest.raises(pytest.skip.Exception, match=r"^custom reason$"):
+        with pytest.importorskip(reason="custom reason"):
+            import doesnotexist  # noqa: F401
+
+    with pytest.raises(pytest.skip.Exception, match=r"^bad import$"):
+        with pytest.importorskip(exc_type=ImportError):
+            raise ImportError("bad import")
+
+
 def test_relpath_rootdir(pytester: Pytester) -> None:
     pytester.makepyfile(
         **{
